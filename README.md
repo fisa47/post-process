@@ -143,9 +143,9 @@ def correct_tracer_concentration(
      ```python
      int_mass_dummy = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
      # units: µg, shape: (time,)
-     # ds[tracer_name]: shape (time, layer, node), units: µg/L
+     # ds[tracer_name]: shape (time, layer, node), units: µg/m³
      # vol: shape (time, layer, node), units: m³
-     # Multiplying gives µg/L * m³ = µg * 1000 (since 1 m³ = 1000 L)
+     # Multiplying gives µg
      ```
 
 5. **Correction Factor Calculation**
@@ -161,7 +161,7 @@ def correct_tracer_concentration(
    - For each timestep, adjust the tracer concentration in every grid cell:
      ```python
      for t in range(n_time):
-         field = ds[tracer_name][t].values           # shape: (layer, node), units: µg/L
+         field = ds[tracer_name][t].values           # shape: (layer, node), units: µg/m³
          volume_t = vol[t]                           # shape: (layer, node), units: m³
          corrected_mass = field * volume_t * correction_factor[t]
          tracer_conc[t] = corrected_mass / volume_t / 1000  # shape: (layer, node), units: µg/L
@@ -185,7 +185,4 @@ correction_factor = target_mass / model_mass
 ### Output
 
 - The output array has the same shape as the input tracer field: (time, layer, node).
-- Units are always µg/L.
-
-This ensures the sum of corrected concentrations matches the real-world mass released for each tracer at each timestep.
-This ensures the sum of corrected concentrations matches the real-world mass released for each tracer at each timestep.
+- Units are always µg/m³, converts to µg/L in the end.
