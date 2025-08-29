@@ -163,6 +163,7 @@ def correct_tracer_concentration(
      for t in range(n_time):
          field = ds[tracer_name][t].values           # shape: (layer, node), units: µg/m³
          volume_t = vol[t]                           # shape: (layer, node), units: m³
+         # Compute corrected mass, can shorten it to direct correction of concentration
          corrected_mass = field * volume_t * correction_factor[t]
          tracer_conc[t] = corrected_mass / volume_t / 1000  # shape: (layer, node), units: µg/L
      ```
