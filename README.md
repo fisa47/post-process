@@ -114,8 +114,8 @@ def correct_tracer_concentration(
 ### Step-by-Step Logic
 
 1. **Mode Selection**
-   - If `dummy_mass_flux` and `real_mass_flux` are provided, use *flux mode* (for injection tracers).
-   - If `dummy_river_conc`, `dummy_river_discharge`, and `real_river_conc` are provided, use *concentration/discharge mode* (for river tracers).
+   - If `dummy_mass_flux` and `real_mass_flux` are provided, use *inject mode* (for injection tracers).
+   - If `dummy_river_conc`, `dummy_river_discharge`, and `real_river_conc` are provided, use *river mode* (for river tracers).
    - Raises error if neither mode is satisfied.
 
 2. **Elapsed Time Calculation**
@@ -126,62 +126,69 @@ def correct_tracer_concentration(
      ```
 
 3. **Target Mass Calculation**
-   - **Flux mode:** For injection tracers, calculate the real-world mass released up to each timestep.
+   - **Inject mode:** For injection tracers, calculate the real-world mass released up to each timestep.
      ```python
-     effective_time = np.minimum(seconds_since_release, release_duration_seconds)
-     target_mass_discharged = real_mass_flux * effective_time
-     # units: µg, shape: (time,)
-     ```
-   - **Concentration/discharge mode:** For river tracers, calculate the real-world mass released up to each timestep.
-     ```python
-     target_mass_discharged = real_river_conc * real_river_discharge * seconds_since_release
-     # units: µg, shape: (time,)
-     ```
+      # Before release mass discharged is 0
+      target_mass = np.zeros_like(time)
 
-4. **Model Mass Calculation**
-   - For each timestep, sum the total mass of tracer in the model domain:
-     ```python
-     int_mass_dummy = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
-     # units: µg, shape: (time,)
-     # ds[tracer_name]: shape (time, layer, node), units: µg/m³
-     # vol: shape (time, layer, node), units: m³
-     # Multiplying gives µg
-     ```
+      # For times during the release, calculate cumulative mass as real_mass_flux * elapsed seconds since release started
+      target_mass[during_release] = real_mass_flux * (seconds_since_release[during_release])
 
-5. **Correction Factor Calculation**
+      # For times after the release period, total mass released is mass_flux * release_duration_seconds (full pulse delivered)
+      target_mass[after_release] = real_mass_flux * release_duration_seconds # constant value
+
+      # Compute model dummy mass discharge
+      dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
+      mass_dummy_final = dummy_mass_model[iend]
+      dummy_mass_model[after_release] = mass_dummy_final
+      # units: µg, shape: (time,)
+      # ds[tracer_name]: shape (time, layer, node), units: µg/m³
+      # vol: shape (time, layer, node), units: m³
+      # Multiplying gives µg
+     ```
+   - **River mode:** For river tracers, calculate the real-world mass released up to each timestep.
+    ```python
+     target_mass = real_river_conc * real_river_discharge * seconds_since_release
+     dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
+     # units: µg, shape: (time,)
+    ```
+
+4. **Correction Factor Calculation**
    - For each timestep, compute the ratio of real-world mass to model mass:
-     ```python
-     correction_factor = np.where(int_mass_dummy > 0, target_mass_discharged / int_mass_dummy, 1.0)
-     # shape: (time,)
-     # If model mass is zero, use factor 1.0 (no correction)
-     correction_factor[0] = 1.0
+    ```python
+    # for river mode 
+    correction_factor = np.where(dummy_mass_model > 0, target_mass / dummy_mass_model, 1.0)
+    # shape: (time,)
+    correction_factor[0] = 1.0
+    if use_inject_mode:
+        # constant correction from the moment when release stopped
+        target_mass_final = target_mass[iend]
+        dummy_mass_final = dummy_mass_model[iend]
+        correction_factor = target_mass_final / dummy_mass_final
      ```
 
-6. **Apply Correction**
+5. **Apply Correction**
    - For each timestep, adjust the tracer concentration in every grid cell:
      ```python
-     for t in range(n_time):
-         field = ds[tracer_name][t].values           # shape: (layer, node), units: µg/m³
-         volume_t = vol[t]                           # shape: (layer, node), units: m³
-         # Compute corrected mass, can shorten it to direct correction of concentration
-         corrected_mass = field * volume_t * correction_factor[t]
-         tracer_conc[t] = corrected_mass / volume_t / 1000  # shape: (layer, node), units: µg/L
+      real_mass_corrected = np.empty_like(vol)
+      for t in range(n_time):
+          field = ds[tracer_name][t].values           # (layer, node)
+          volume_t = vol[t]                           # (layer, node)
+          # Compute real corrected mass
+          if use_inject_mode:
+              real_mass_corrected[t] = field * volume_t * correction_factor
+          else:
+              # in river mode correction factor is still an array of shape (time,)
+              real_mass_corrected[t] = field * volume_t * correction_factor[t]
+
+          # correct concentrations
+          tracer_conc[t] = real_mass_corrected[t] / volume_t / 1000  # µg/L
      ```
    - The division by 1000 converts from µg/m³ to µg/L.
 
-7. **Return**
+6. **Return**
    - Returns `tracer_conc`, numpy array of corrected concentrations, shape (time, layer, node), units: µg/L.
 
-### Summary Formula
-
-For each timestep and grid cell:
-```
-corrected_concentration = (original_concentration * cell_volume * correction_factor) / cell_volume / 1000
-```
-where
-```
-correction_factor = target_mass / model_mass
-```
 
 ### Output
 

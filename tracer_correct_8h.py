@@ -147,9 +147,9 @@ def correct_tracer_concentration(
         target_mass[during_release] = real_mass_flux * (seconds_since_release[during_release])
 
         # For times after the release period, total mass released is mass_flux * release_duration_seconds (full pulse delivered)
-        target_mass[after_release] = real_mass_flux  * release_duration_seconds # constant value
+        target_mass[after_release] = real_mass_flux * release_duration_seconds # constant value
 
-        # Compute model dummy mass discharge to compare with theoretical
+        # Compute model dummy mass discharge
         dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
         plt.figure(figsize=(8,4))
         plt.plot(dummy_mass_model)
@@ -164,7 +164,7 @@ def correct_tracer_concentration(
         target_mass = real_river_conc * real_river_discharge * seconds_since_release
 
         # Compute integrated dummy tracer mass at each timestep (sum over space)
-        dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay'))  # should be xarray
+        dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
 
 
     # Allocate output array (same shape as dummy tracer)
@@ -175,25 +175,25 @@ def correct_tracer_concentration(
     tracer_conc = np.empty_like(ds[tracer_name].values, dtype=np.float32)
 
     with np.errstate(divide='ignore', invalid='ignore'):
-        correction_factor2 = np.where(dummy_mass_model > 0, target_mass / dummy_mass_model, 1.0)
-        correction_factor2[0] = 1.0
+        correction_factor = np.where(dummy_mass_model > 0, target_mass / dummy_mass_model, 1.0)
+        correction_factor[0] = 1.0
         if use_inject_mode:
             # constant correction from the moment when release stopped
             target_mass_final = target_mass[iend]
             dummy_mass_final = dummy_mass_model[iend]
-            correction_factor2 = target_mass_final / dummy_mass_final
-            print('correction 2: ', correction_factor2)
+            correction_factor = target_mass_final / dummy_mass_final
+            print('correction 2: ', correction_factor)
 
-    # second correction
+    # correction
     real_mass_corrected = np.empty_like(vol)
     for t in range(n_time):
         field = ds[tracer_name][t].values           # (layer, node)
         volume_t = vol[t]                           # (layer, node)
         # Compute real corrected mass
         if use_inject_mode:
-            real_mass_corrected[t] = field * volume_t * correction_factor2
+            real_mass_corrected[t] = field * volume_t * correction_factor
         else:
-            real_mass_corrected[t] = field * volume_t * correction_factor2[t]
+            real_mass_corrected[t] = field * volume_t * correction_factor[t]
 
         # correct concentrations
         tracer_conc[t] = real_mass_corrected[t] / volume_t / 1000  # µg/L
