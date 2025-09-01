@@ -1,0 +1,5 @@
+*.png
+plots/
+.ipynb
+.ipynb_checkpoints/
+.DS_Store

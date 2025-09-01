@@ -1,6 +1,7 @@
 import xarray as xr
 import numpy as np
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 import dask
 from dask.diagnostics import ProgressBar
@@ -15,8 +16,9 @@ conv = 1e6/3.6  # from kg/hr to ug/s
 
 # Load dataset
 # Here it is a dataset with 2 hr timestamps merged from restart files
-ds_all = xr.open_dataset('../output/lysefjord_tracers2.nc',
+ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_raw.nc',
                            decode_times=False)
+
 ds_all = ds_all[['time', 'node', 'siglay', 'h', 'zeta', 'river_tracer_c', 'tracer2_c', 'tracer4_c', 'tracer6_c']]
 
 ds_all = ds_all.chunk({'time': 24})
@@ -38,7 +40,7 @@ tracers = [
     'release_start': time[0], 'loc': (-10115, 6566772)},
 
    {'name': 'tracer2_c', 'title': 'Ådnøy SØ 8 hours, Cu',
-    'dummy_mass_flux': 70, 'real_mass_flux': 2*650/8*conv,
+    'dummy_mass_flux': 70, 'real_mass_flux': 2*650/8*conv, # ug/s
     'release_start':  58344.166667,  # 2018-08-14 4:00:00
     'loc': (-15715, 6565218), 'pipe_ind': 37284},
 
@@ -47,10 +49,10 @@ tracers = [
     'release_start': 58344.375000,  # 2018-08-14 9:00:00
     'loc': (-11046, 6557939), 'pipe_ind': 49112},
 
-   {'name': 'tracer4_c_copy', 'title': 'Oltenvik 8 hours, Tralapyril', 
-    'dummy_mass_flux': 90, 'real_mass_flux': 10.4/8*conv,
-    'release_start': 58344.375000,  # 2018-08-14 9:00:00
-    'loc': (-11046, 6557939), 'pipe_ind': 49112},
+#    {'name': 'tracer4_c_copy', 'title': 'Oltenvik 8 hours, Tralapyril', 
+#     'dummy_mass_flux': 90, 'real_mass_flux': 10.4/8*conv,
+#     'release_start': 58344.375000,  # 2018-08-14 9:00:00
+#     'loc': (-11046, 6557939), 'pipe_ind': 49112},
 
    {'name': 'tracer6_c', 'title': 'Gråtnes 8 hours',
     'dummy_mass_flux': 80, 'real_mass_flux': 2*356/8*conv,
@@ -58,37 +60,66 @@ tracers = [
     'loc': (-10977, 6559806), 'pipe_ind': 48198},
 ]
 
-# Volume calculation
-def unstructured_grid_volume(area, depth, surface_elevation, thickness):
+def unstructured_grid_volume(area, depth, surface_elevation, thickness, depth_integrated=False):
+    """
+    Calculate the volume for every cell in the unstructured grid.
+
+    Parameters
+    ----------
+    area : np.ndarray
+        Element area
+    depth : np.ndarray
+        Static water depth
+    surface_elevation : np.ndarray
+        Time-varying surface elevation
+    thickness : np.ndarray
+        Level (i.e. between layer) position (range 0-1). In FVCOM, this is siglev.
+    depth_intergrated : bool, optional
+        Set to True to return the depth-integrated volume in addition to the depth-resolved volume. Defaults to False.
+
+    Returns
+    -------
+    depth_volume : np.ndarray
+        Depth-resolved volume of all the elements with time.
+    volume : np.ndarray, optional
+        Depth-integrated volume of all the elements with time.
+
+    """
+
+    # Convert thickness to actual thickness rather than position in water column of the layer.
     dz = np.abs(np.diff(thickness, axis=0))
     volume = (area * (surface_elevation + depth))
     depth_volume = volume[:, np.newaxis, :] * dz[np.newaxis, ...]
-    return depth_volume
+
+    if depth_integrated:
+        return depth_volume, volume
+    else:
+        return depth_volume
 
 def correct_tracer_concentration(
     ds,                      # xarray.Dataset containing tracer fields
     tracer_name,             # str, name of tracer variable in ds
     vol,                     # np.ndarray, grid cell volumes [shape: (time, layer, node)]
     time,                    # np.ndarray, FVCOM time values [shape: (time,)]
-    dummy_river_conc=None, # float, dummy concentration in µg/m³ (for river tracers)
+    dummy_river_conc=None,        # float, dummy concentration in µg/m³ (for river tracers)
     dummy_river_discharge=None,     # float, dummy discharge in m³/s (for river tracers)
     real_river_conc=None, # float, real concentration in µg/m³ (for river tracers)
     real_river_discharge=None,     # float, real discharge in m³/s (for river tracers)
     dummy_mass_flux=None,      # float, dummy mass flux in µg/s (for injection tracers)
     real_mass_flux=None, # float, real mass flux in µg/s (for injection tracers)
     release_start_time=None,      # float, FVCOM time value when release starts
-    release_duration_seconds=8*3600 # float, duration of pulse release in seconds (default 8 hours)
+    release_duration_seconds=8*3600 # float, duration of pulse release in seconds (default 8 hours),
 ):
     """
     Correct tracer concentration in the dataset.
     Returns tracer concentration in µg/L. Automatically converts from µg/m³ to µg/L.
     """
     # For mass flux injection
-    use_flux_mode = dummy_mass_flux is not None and real_mass_flux is not None
+    use_inject_mode = dummy_mass_flux is not None and real_mass_flux is not None
     # For rivers (given discharge and concentration)
-    use_conc_mode = dummy_river_conc is not None and dummy_river_discharge is not None and real_river_conc is not None
+    use_river_mode = dummy_river_conc is not None and dummy_river_discharge is not None and real_river_conc is not None
 
-    if not (use_flux_mode or use_conc_mode):
+    if not (use_inject_mode or use_river_mode):
         raise ValueError("Provide either (dummy_river_conc + dummy_river_discharge + real_river_conc) "
                          "OR (dummy_mass_flux + real_mass_flux)")
 
@@ -98,25 +129,43 @@ def correct_tracer_concentration(
     # Time (in seconds) since release started
     seconds_since_release = np.maximum((time - release_start_time) * 86400, 0)
 
-    # Compute real-world target mass
-    if use_flux_mode:
-        # is_ramped means that tracer is released for a limited time
-        is_ramped = tracer_name in ['tracer_2_c', 'tracer_4_c', 'tracer4_c_copy', 'tracer6_c']  # these guys are released for 8 hours
-        # if not ramped, release is continuous
-        effective_time = np.minimum(seconds_since_release, release_duration_seconds) if is_ramped else seconds_since_release
-        target_mass_discharged = real_mass_flux * effective_time
+    if use_inject_mode:
+        
+        release_end_time = release_start_time + release_duration_seconds/86400
+        iend = np.argwhere(time <= release_end_time)[-1][0]
+        #print("iend:", iend)
+        
+        # Identify time steps during the release period (release_start_time to release_start_time + release_duration_seconds)
+        during_release = ((time >= release_start_time) & (time <= release_end_time))
+        after_release = time > release_end_time
+
+        # Initialize array of zeros to hold the cumulative mass discharged at each time step
+        # Before release mass discharged is 0
+        target_mass = np.zeros_like(time)
+
+        # For times during the release, calculate cumulative mass as real_mass_flux * elapsed seconds since release started
+        target_mass[during_release] = real_mass_flux * (seconds_since_release[during_release])
+
+        # For times after the release period, total mass released is mass_flux * release_duration_seconds (full pulse delivered)
+        target_mass[after_release] = real_mass_flux  * release_duration_seconds # constant value
+
+        # Compute model dummy mass discharge to compare with theoretical
+        dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
+        plt.figure(figsize=(8,4))
+        plt.plot(dummy_mass_model)
+        plt.title('dummy mass model')
+        plt.savefig('dummy_model_raw.png', dpi=200)
+        mass_dummy_final = dummy_mass_model[iend]
+        dummy_mass_model[after_release] = mass_dummy_final
+
     else:
         if real_river_discharge is None:
             raise ValueError("You must provide `real_river_discharge` for river tracers.")
-        target_mass_discharged = real_river_conc * real_river_discharge * seconds_since_release
+        target_mass = real_river_conc * real_river_discharge * seconds_since_release
 
-    # Compute integrated dummy tracer mass at each timestep (sum over space)
-    int_mass_dummy = (vol * ds[tracer_name]).sum(dim=('node', 'siglay')).values
+        # Compute integrated dummy tracer mass at each timestep (sum over space)
+        dummy_mass_model = (vol * ds[tracer_name]).sum(dim=('node', 'siglay'))  # should be xarray
 
-    # Compute correction factor per timestep
-    with np.errstate(divide='ignore', invalid='ignore'):
-        correction_factor = np.where(int_mass_dummy > 0, target_mass_discharged / int_mass_dummy, 1.0)
-    correction_factor[0] = 1.0
 
     # Allocate output array (same shape as dummy tracer)
     tracer_shape = ds[tracer_name].shape
@@ -125,16 +174,41 @@ def correct_tracer_concentration(
     n_time = ds[tracer_name].shape[0]
     tracer_conc = np.empty_like(ds[tracer_name].values, dtype=np.float32)
 
+    with np.errstate(divide='ignore', invalid='ignore'):
+        correction_factor2 = np.where(dummy_mass_model > 0, target_mass / dummy_mass_model, 1.0)
+        correction_factor2[0] = 1.0
+        if use_inject_mode:
+            # constant correction from the moment when release stopped
+            target_mass_final = target_mass[iend]
+            dummy_mass_final = dummy_mass_model[iend]
+            correction_factor2 = target_mass_final / dummy_mass_final
+            print('correction 2: ', correction_factor2)
+
+    # second correction
+    real_mass_corrected = np.empty_like(vol)
     for t in range(n_time):
         field = ds[tracer_name][t].values           # (layer, node)
         volume_t = vol[t]                           # (layer, node)
-        # Compute corrected mass, can shorten it to direct correction of concentration
-        corrected_mass = field * volume_t * correction_factor[t]
-        tracer_conc[t] = corrected_mass / volume_t / 1000  # µg/L
+        # Compute real corrected mass
+        if use_inject_mode:
+            real_mass_corrected[t] = field * volume_t * correction_factor2
+        else:
+            real_mass_corrected[t] = field * volume_t * correction_factor2[t]
 
+        # correct concentrations
+        tracer_conc[t] = real_mass_corrected[t] / volume_t / 1000  # µg/L
+
+    #print("real_mass_corrected, kg: ", real_mass_corrected.sum(axis=(1,2)) / 1e9)
+     
+    ### plot
+    plt.figure(figsize=(8, 4))
+    plt.plot(time, dummy_mass_model, label='model dummy mass')
+    plt.legend()
+    plt.savefig(f"dummy_mass_{tracer_name}.png")
+    
     # Reporting
     print(f"Tracer '{tracer_name}' corrected using:")
-    if use_flux_mode:
+    if use_inject_mode:
         print(f"  dummy_flux     = {dummy_mass_flux:.2e} µg/s")
         print(f"  real_flux      = {real_mass_flux:.2e} µg/s")
     else:
@@ -151,7 +225,7 @@ def correct_tracer_concentration(
 
 # Grid data
 # Get it from actual output file
-ds_output = xr.open_dataset('../output/jul14/lysefjord_0001.nc', decode_times=False).isel(time=-1)
+ds_output = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_0001.nc', decode_times=False).isel(time=-1)
 area = ds_output['art1'].values
 depth = ds_output['h'].values
 surface_elevation = ds_all['zeta'].values
@@ -162,7 +236,6 @@ vol = unstructured_grid_volume(area, depth, surface_elevation, thickness)
 x, y = ds_output['x'], ds_output['y']
 
 
-# Plot for each tracer
 for tracer in tracers:
     tracer_name = tracer['name']
 
@@ -191,10 +264,9 @@ for tracer in tracers:
 
 ds_all = ds_all[['time', 'node', 'siglay', 'h', 'zeta',
         'river_tracer_c_corrected', 'tracer2_c_corrected',
-        'tracer4_c_corrected', 'tracer4_c_copy_corrected',
-        'tracer6_c_corrected']]
+        'tracer4_c_corrected', 'tracer6_c_corrected']]
 
-delayed_obj = ds_all.to_netcdf('../output/lysefjord_tracers2_corrected_2h.nc',
+delayed_obj = ds_all.to_netcdf('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_corrected_2h_M2.nc',
                                 compute=False)
 with ProgressBar():
     dask.compute(delayed_obj)

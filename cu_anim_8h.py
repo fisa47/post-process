@@ -13,8 +13,8 @@ origin = datetime(1858, 11, 17)
 
 # Load datasets
 shell_farm = (-9937.5, 6567670.1)
-ds_all = xr.open_dataset('../output/lysefjord_tracers2_corrected_2h.nc', decode_times=False)
-ds_output = xr.open_dataset('../output/lysefjord_0014.nc', decode_times=False).isel(time=-1)
+ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_corrected_2h_M2.nc', decode_times=False)
+ds_output = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_0001.nc', decode_times=False).isel(time=-1)
 
 ds_all['sum_cu'] = ds_all['river_tracer_c_corrected'] + ds_all['tracer2_c_corrected'] + ds_all['tracer4_c_corrected'] + ds_all['tracer6_c_corrected'] 
 

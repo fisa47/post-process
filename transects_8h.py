@@ -12,7 +12,7 @@ fvcom_origin = datetime(1858, 11, 17)
 shell_farm = (-9937.5, 6567670.1)
 
 # Load dataset
-ds_all = xr.open_dataset('../output/lysefjord_tracers2_corrected_2h.nc', decode_times=False)
+ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_corrected_2h_M2.nc', decode_times=False)
 time = ds_all.time.values
 
 time_start = 58344 # 2018-08-14 0:00:00
@@ -50,7 +50,7 @@ tracers = [
 
 # Grid data
 # Get it from actual output file
-ds_output = xr.open_dataset('../output/jul14/lysefjord_0001.nc', decode_times=False).isel(time=-1)
+ds_output = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_0001.nc', decode_times=False).isel(time=-1)
 area = ds_output['art1'].values
 depth = ds_output['h'].values
 surface_elevation = ds_all['zeta'].values
