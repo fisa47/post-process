@@ -15,14 +15,17 @@ fvcom_origin = datetime(1858, 11, 17)
 conv = 1e6/3.6  # from kg/hr to ug/s
 
 # Load dataset
-# Here it is a dataset with 2 hr timestamps merged from restart files
+# Here it is a dataset with 2 hr timestamps merged from restart files (1h for jul 14th !!!)
 ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_raw.nc',
                            decode_times=False)
+# ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_tracers.nc',
+#                            decode_times=False)
 
 ds_all = ds_all[['time', 'node', 'siglay', 'h', 'zeta', 'river_tracer_c', 'tracer2_c', 'tracer4_c', 'tracer6_c']]
 
 ds_all = ds_all.chunk({'time': 24})
 time = ds_all.time.values
+print(time[:4])
 
 # Create a copy of tracer4_c for Tralopyril
 ds_all[f'tracer4_c_copy'] = ds_all['tracer4_c'] * 1
@@ -42,11 +45,13 @@ tracers = [
    {'name': 'tracer2_c', 'title': 'Ådnøy SØ 8 hours, Cu',
     'dummy_mass_flux': 70, 'real_mass_flux': 2*650/8*conv, # ug/s
     'release_start':  58344.166667,  # 2018-08-14 4:00:00
+    #'release_start':  58340.45833,  # run 14 JUL
     'loc': (-15715, 6565218), 'pipe_ind': 37284},
 
    {'name': 'tracer4_c', 'title': 'Oltenvik 8 hours, Cu',
     'dummy_mass_flux': 90, 'real_mass_flux': 2*262/8*conv,
     'release_start': 58344.375000,  # 2018-08-14 9:00:00
+    #'release_start': 58337.04167,  # run 14 JUL
     'loc': (-11046, 6557939), 'pipe_ind': 49112},
 
 #    {'name': 'tracer4_c_copy', 'title': 'Oltenvik 8 hours, Tralapyril', 
@@ -57,6 +62,7 @@ tracers = [
    {'name': 'tracer6_c', 'title': 'Gråtnes 8 hours',
     'dummy_mass_flux': 80, 'real_mass_flux': 2*356/8*conv,
     'release_start': 58344.375000,  # 2018-08-14 9:00:00
+    #'release_start': 58337.08333,  # run 14 JUL
     'loc': (-10977, 6559806), 'pipe_ind': 48198},
 ]
 
@@ -133,7 +139,7 @@ def correct_tracer_concentration(
         
         release_end_time = release_start_time + release_duration_seconds/86400
         iend = np.argwhere(time <= release_end_time)[-1][0]
-        #print("iend:", iend)
+        print("iend:", iend)
         
         # Identify time steps during the release period (release_start_time to release_start_time + release_duration_seconds)
         during_release = ((time >= release_start_time) & (time <= release_end_time))
@@ -198,7 +204,7 @@ def correct_tracer_concentration(
         # correct concentrations
         tracer_conc[t] = real_mass_corrected[t] / volume_t / 1000  # µg/L
 
-    #print("real_mass_corrected, kg: ", real_mass_corrected.sum(axis=(1,2)) / 1e9)
+    print("real_mass_corrected, kg: ", real_mass_corrected.sum(axis=(1,2)) / 1e9)
      
     ### plot
     plt.figure(figsize=(8, 4))
