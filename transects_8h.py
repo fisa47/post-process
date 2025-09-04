@@ -12,10 +12,14 @@ fvcom_origin = datetime(1858, 11, 17)
 shell_farm = (-9937.5, 6567670.1)
 
 # Load dataset
+time_start = 58344 # 2018-08-14 0:00:00
+#time_start = 58337 # jul 14 run
+#ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_tracers_corrected_M2.nc',
+#                         decode_times=False).sel(time=slice(time_start, None))
 ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_corrected_2h_M2.nc', decode_times=False)
 time = ds_all.time.values
 
-time_start = 58344 # 2018-08-14 0:00:00
+
 
 # Define tracer-specific parameters
 conv = 1e6/3.6  # from kg/hr to ug/s
@@ -59,17 +63,43 @@ thickness = ds_output['siglev'].values
 tri = ds_output['nv'].values.T - 1
 x, y = ds_output['x'], ds_output['y']
 
-# Build the 0 – 2.6 gray -> 2.6 – 5.2 orange -> >5.2 dark-red colormap
-n = 256
-gray_ramp   = plt.cm.gray_r(np.linspace(0, 1, n))             # 256‐step gray
-orange_flat = np.tile(mcolors.to_rgba("#FFA500"), (n, 1))   # 256‐step flat orange
+def make_colormap(cmap_type, cmap_matplotlib, abreak=0.4):
+    ### Qualitative colormap
+    if cmap_type == 'qualitative':
+        # --- breaks
+        vmin, a, b, vmax = 0.0, abreak, 2.6, 5.2
 
-colors = np.vstack((gray_ramp, orange_flat))
-cmap   = mcolors.ListedColormap(colors)
-cmap.set_over("#8B0000")                                    # dark red for >5.2
+        # 80/40/40 bins
+        n1, n2, n3 = 80, 40, 40
 
-norm = mcolors.Normalize(vmin=0, vmax=5.2, clip=False)
-# ──────────────────────────────────────────────────────────────
+        # Boundaries (length = 101)
+        bounds1 = np.linspace(vmin, a, n1 + 1)
+        bounds2 = np.linspace(a, b, n2 + 1)[1:]
+        bounds3 = np.linspace(b, vmax, n3 + 1)[1:]
+        boundaries = np.concatenate([bounds1, bounds2, bounds3])
+        # include tiny epsilon so exact vmin is inside first bin
+        boundaries[0] = vmin - 1e-12
+        print('boundaries:', boundaries)
+
+        # Colormap with 100 colors: 80 gray ramp, 10 yellow, 10 orange
+        gray_ramp  = plt.cm.gray_r(np.linspace(0, 1, n1))
+        yellow_flat = np.tile(mcolors.to_rgba("#F6FF00"), (n2, 1))
+        orange_flat = np.tile(mcolors.to_rgba("#FFA500"), (n3, 1))
+
+        colors = np.vstack([gray_ramp, yellow_flat, orange_flat])
+        cmap = mcolors.ListedColormap(colors)
+        cmap.set_over("#8B0000")  # > vmax (5.2) shows as dark red
+
+        # Optional: a BoundaryNorm for other uses (not needed for contourf if you pass levels)
+        norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap.N, clip=False)
+
+    ### Continuous colormap
+    else:
+        cmap = cmap_matplotlib
+        norm = mcolors.Normalize(vmin=0, vmax=0.5, clip=False)
+        boundaries = None
+
+    return cmap, norm, boundaries
 
 # === Transect plot at Shell Farm (node = 51016) ===
 print("Plotting Cu time-depth transect at Shell Farm (node 51016)...")
@@ -101,35 +131,52 @@ time_days = (time - time_start)  # days since start
 def plot_transect(tracer_depth_conc,
                   depth_at_node,
                   time_days,
-                  cmap,
-                  norm,
+                  cmap_type,
+                  cmap_matplotlib,
                   title,
-                  fname):
+                  fname,
+                  abreak=0.4):
     """
     Plot the transect of tracer concentration over time and depth.
     """
 
+    cmap, norm, boundaries = make_colormap(cmap_type=cmap_type, cmap_matplotlib=cmap_matplotlib, abreak=abreak)
+
     fig, ax = plt.subplots(figsize=(8, 4))
 
-    # levels between 0 – 5.2
-    levels = np.linspace(0, 5.2, 101)
-
-    cf = ax.contourf(
+    # For qualitative/discrete: pass levels and OMIT norm to avoid warnings.
+    contourf_kwargs = dict(cmap=cmap, extend='max')
+    if cmap_type == 'qualitative':
+        print("Qualitative colormap")
+        cf = ax.contourf(
         time_days,
         depth_at_node,
         tracer_depth_conc.T,
-        levels=levels,
+        cmap=cmap,
+        levels=boundaries,
+        norm=norm,
+        extend='max',
+        )
+    else:
+        cf = ax.contourf(
+        time_days,
+        depth_at_node,
+        tracer_depth_conc.T,
         cmap=cmap,
         norm=norm,
-        extend='max'
-    )
+        )
 
+    
     # Colorbar
-    cbar = fig.colorbar(cf, ax=ax, extend='max', fraction=0.02, pad=0.04)
-    ticks = [0, 1, 2, 2.6, 5.2]
-    cbar.ax.yaxis.set_major_locator(FixedLocator(ticks))
-    cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%g'))
-    cbar.ax.set_yticklabels(['0', '1', '2', '2.6', '>5.2'])
+    if cmap_type == 'qualitative':
+        cbar = fig.colorbar(cf, ax=ax, extend='max', boundaries=boundaries, norm=norm, fraction=0.02, pad=0.04)
+        ticks = [0, abreak/2, abreak, 2.6, 5.2]
+        cbar.ax.yaxis.set_major_locator(FixedLocator(ticks))
+        cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%g'))
+        cbar.ax.set_yticklabels(['0', f'{abreak/2:.2f}', f'{abreak:.2f}', '2.60', '>5.20'])
+        cbar.ax.minorticks_off()
+    else:
+        cbar = fig.colorbar(cf, ax=ax, spacing='uniform', extend='max', fraction=0.02, pad=0.04)
     cbar.set_label("μg/L")
 
     ax.set_xlim(0, 21)
@@ -147,27 +194,29 @@ def plot_transect(tracer_depth_conc,
     print(title, "saved to plots/" + fname)
     plt.close()
 
+mode = "qualitative"
+
 plot_transect(sum_depth_conc,
-                  depth_at_node, time_days, cmap, norm,
+                  depth_at_node, time_days, mode, "BuPu",
                   "Total Concentration of Cu (μg/L) at Shell Farm from all sources",
                   "shell_farm_Cu_sum_transect.png")
 
 plot_transect(ds_all[f'river_tracer_c_corrected'].sel(node=shell_node).values,
-                  depth_at_node, time_days, cmap, norm,
+                  depth_at_node, time_days, mode, "BuPu",
                   "Concentration of Cu (μg/L) at Shell Farm from Lastabotn",
-                  "shell_farm_Cu_Lastabotn_transect.png")
+                  "shell_farm_Cu_Lastabotn_transect.png", abreak=0.02)
 
 plot_transect(ds_all[f'tracer2_c_corrected'].sel(node=shell_node).values,
-                  depth_at_node, time_days, cmap, norm,
+                  depth_at_node, time_days, mode, "BuPu",
                   "Concentration of Cu (μg/L) at Shell Farm from Ådnøy SØ 8 hours release",
                   "shell_farm_Cu_Adnoy8h_transect.png")
 
 plot_transect(ds_all[f'tracer4_c_corrected'].sel(node=shell_node).values,
-                  depth_at_node, time_days, cmap, norm,
+                  depth_at_node, time_days, mode, "BuPu",
                   "Concentration of Cu (μg/L) at Shell Farm from Oltenvik 8 hours release",
                   "shell_farm_Cu_Oltenvik8h_transect.png")
 
 plot_transect(ds_all[f'tracer6_c_corrected'].sel(node=shell_node).values,
-                  depth_at_node, time_days, cmap, norm,
+                  depth_at_node, time_days, mode, "BuPu",
                   "Concentration of Cu (μg/L) at Shell Farm from Gråtness 8 hours release ",
                   "shell_farm_Cu_Gratness8h_transect.png")
