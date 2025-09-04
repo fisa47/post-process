@@ -14,6 +14,7 @@ origin = datetime(1858, 11, 17)
 # Load datasets
 shell_farm = (-9937.5, 6567670.1)
 ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/lysefjord_tracers_corrected_2h_M2.nc', decode_times=False)
+#ds_all = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_tracers_corrected_M2.nc', decode_times=False)
 ds_output = xr.open_dataset('/Users/Admin/Documents/scripts/fvcom-work/Lysefjord/output/jul14/lysefjord_0001.nc', decode_times=False).isel(time=-1)
 
 ds_all['sum_cu'] = ds_all['river_tracer_c_corrected'] + ds_all['tracer2_c_corrected'] + ds_all['tracer4_c_corrected'] + ds_all['tracer6_c_corrected'] 
@@ -33,26 +34,6 @@ conc_oltenvik = ds_all['tracer4_c_corrected'].max(dim='siglay').values
 conc_gratness = ds_all['tracer6_c_corrected'].max(dim='siglay').values
 conc_river = ds_all['river_tracer_c_corrected'].max(dim='siglay').values
 
-# 1) Build a 512-entry colormap: 256 gray shades → 256 orange
-n = 256
-# gray ramp from white to black
-gray_ramp   = plt.cm.gray(np.linspace(0, 1, n))
-
-# flat orange for the next 256
-orange_flat = np.tile(mcolors.to_rgba("#FFA500"), (n, 1))
-
-# stack them into one ListedColormap
-colors = np.vstack((gray_ramp, orange_flat))
-cmap   = mcolors.ListedColormap(colors)
-
-# 2) Anything above 5.2 - dark red
-cmap.set_over("#8B0000")
-
-# 3) Normalize 0 - 5.2 (so 2.6 is halfway in the colormap)
-norm = mcolors.Normalize(vmin=0, vmax=5.2, clip=False)
-
-
-### BIG ###
 
 import os
 import numpy as np
@@ -62,6 +43,35 @@ import matplotlib.colors as mcolors
 from matplotlib.ticker import FixedLocator, FormatStrFormatter
 import contextily as ctx
 
+def make_colormap(cmap_type, cmap_matplotlib):
+    ### Qualitative colormap
+    if cmap_type == 'qualitative':
+        # 1) Build a 512-entry colormap: 256 gray shades → 256 orange
+        n = 256
+        # gray ramp from white to black
+        gray_ramp = plt.cm.gray_r(np.linspace(0, 1, n))
+
+        # flat orange for the next 256
+        orange_flat = np.tile(mcolors.to_rgba("#FFA500"), (n, 1))
+
+        # stack them into one ListedColormap
+        colors = np.vstack((gray_ramp, orange_flat))
+        cmap = mcolors.ListedColormap(colors)
+
+        # 2) Anything above 5.2 - dark red
+        cmap.set_over("#8B0000")
+
+        # 3) Normalize 0 - 5.2 (so 2.6 is halfway in the colormap)
+        norm = mcolors.Normalize(vmin=0, vmax=5.2, clip=False)
+
+    ### Continuous colormap
+    else:
+        cmap = cmap_matplotlib
+        norm = mcolors.Normalize(vmin=0, vmax=0.05, clip=False)
+
+    return cmap, norm
+
+
 def animate_concentration(
     conc,            # ndarray, shape (nt, nnode)
     time,            # 1D array (days since start), length nt
@@ -69,29 +79,21 @@ def animate_concentration(
     shell_farm,      # (x,y) tuple
     sources,         # dict with source names and their (x,y) tuples
     output_path,     # "plots/Cu_big.mp4"
+    cmap_type="qualitative",  # "qualitative" or "continuous"
+    cmap_matplotlib="BuPu",  # used if cmap_type="continuous"
     basemap_crs="EPSG:32633",
     basemap_source=ctx.providers.OpenStreetMap.Mapnik,
-    xlim=(-20000, 0),
-    ylim=(6.55e6, 6.575e6),
+    xlim=(-35000, 0),        # (-30000, 0)
+    ylim=(6.55e6, 6.585e6),  # (6.55e6, 6.575e6)
     fps=5,
     dpi=200
 ):
-    """Animate a scatter of conc over (x,y) with your special colormap."""
-    # 1) Build colormap
-    n = 256
-    gray_ramp   = plt.cm.gray_r(np.linspace(0, 1, n))
-    orange_flat = np.tile(mcolors.to_rgba("#FFA500"), (n, 1))
-    colors = np.vstack((gray_ramp, orange_flat))
-    cmap = mcolors.ListedColormap(colors)
-    cmap.set_over("#8B0000")
+    cmap, norm = make_colormap(cmap_type=cmap_type, cmap_matplotlib=cmap_matplotlib)
 
-    norm = mcolors.Normalize(vmin=0, vmax=5.2, clip=False)
-
-    # 2) convert numeric days -> real timestamps
+    # convert numeric days -> real timestamps
     #    time is days since origin
     real_times = pd.to_datetime(time, unit="D", origin=origin)
 
-    # 2) Figure & initial scatter
     fig, ax = plt.subplots(figsize=(10, 6))
     sc = ax.scatter(
         x, y,
@@ -122,10 +124,11 @@ def animate_concentration(
         extend='max',
         fraction=0.02, pad=0.04
     )
-    ticks = [0, 1, 2, 2.6, 5.2]
-    cbar.ax.yaxis.set_major_locator(FixedLocator(ticks))
-    cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%g'))
-    cbar.ax.set_yticklabels(['0', '1', '2', '2.6', '>5.2'])
+    if cmap_type == 'qualitative':
+        ticks = [0, 1, 2, 2.6, 5.2]
+        cbar.ax.yaxis.set_major_locator(FixedLocator(ticks))
+        cbar.ax.yaxis.set_major_formatter(FormatStrFormatter('%g'))
+        cbar.ax.set_yticklabels(['0', '1', '2', '2.6', '>5.2'])
     cbar.set_label('Concentration (µg/L)')
 
     # 4) Update function
@@ -146,19 +149,22 @@ def animate_concentration(
     plt.close(fig)
     print(f"Animation saved to {output_path}")
 
-animate_concentration(
-    conc=conc_sum,
-    time=time,
-    x=x, y=y,
-    shell_farm=shell_farm,
-    sources={
-        'Lastabotn': (-10115, 6566772),
-        'Ådnøy SØ': (-15715, 6565218),
-        'Oltenvik': (-11046, 6557939),
-        'Gråtness': (-10977, 6559806)
-    },
-    output_path="plots/Cu_sum.mp4"
-)
+mode = "qualitative"
+
+# animate_concentration(
+#     conc=conc_sum,
+#     time=time,
+#     x=x, y=y,
+#     shell_farm=shell_farm,
+#     sources={
+#         'Lastabotn': (-10115, 6566772),
+#         'Ådnøy SØ': (-15715, 6565218),
+#         'Oltenvik': (-11046, 6557939),
+#         'Gråtness': (-10977, 6559806)
+#     },
+#     cmap_type=mode,
+#     output_path="plots/Cu_sum.mp4"
+# )
 
 animate_concentration(
     conc=conc_adnoy,
@@ -168,38 +174,42 @@ animate_concentration(
     sources={
         'Ådnøy SØ': (-15715, 6565218),  
     },
-    output_path="plots/Cu_adnoy.mp4"
+    cmap_type=mode,
+    output_path="plots/bigger/Cu_adnoy.mp4"
 )
 
-animate_concentration(
-    conc=conc_oltenvik,
-    time=time,
-    x=x, y=y,
-    shell_farm=shell_farm,
-    sources={
-        'Oltenvik': (-11046, 6557939),
-    },
-    output_path="plots/Cu_oltenvik.mp4"
-)
+# animate_concentration(
+#     conc=conc_oltenvik,
+#     time=time,
+#     x=x, y=y,
+#     shell_farm=shell_farm,
+#     sources={
+#         'Oltenvik': (-11046, 6557939),
+#     },
+#     cmap_type=mode,
+#     output_path="plots/Cu_oltenvik.mp4"
+# )
 
-animate_concentration(
-    conc=conc_gratness,
-    time=time,
-    x=x, y=y,
-    shell_farm=shell_farm,
-    sources={
-        'Gråtness': (-10977, 6559806),
-    },
-    output_path="plots/Cu_gratness.mp4"
-)
+# animate_concentration(
+#     conc=conc_gratness,
+#     time=time,
+#     x=x, y=y,
+#     shell_farm=shell_farm,
+#     sources={
+#         'Gråtness': (-10977, 6559806),
+#     },
+#     cmap_type=mode,
+#     output_path="plots/Cu_gratness.mp4"
+# )
 
-animate_concentration(
-    conc=conc_river,
-    time=time,
-    x=x, y=y,
-    shell_farm=shell_farm,
-    sources={
-        'Lastabotn': (-10115, 6566772),
-    },
-    output_path="plots/Cu_river.mp4"
-)
+# animate_concentration(
+#     conc=conc_river,
+#     time=time,
+#     x=x, y=y,
+#     shell_farm=shell_farm,
+#     sources={
+#         'Lastabotn': (-10115, 6566772),
+#     },
+#     cmap_type=mode,
+#     output_path="plots/Cu_river.mp4"
+# )
